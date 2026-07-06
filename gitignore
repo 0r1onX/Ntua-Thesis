@@ -1,0 +1,27 @@
+# ---- Μυστικά / credentials ----
+.env
+*.key
+secrets.*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ---- Δεδομένα & έξοδοι ----
+# Ξεσχολίασε ό,τι ΔΕΝ θέλεις να ανέβει.
+harvester.db
+#reporting_obligations.json
+notes.txt
+llm_classifier_v1.py
+*.xlsx
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
