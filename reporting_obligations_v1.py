@@ -365,6 +365,12 @@ def _truncate_next(text: str, max_chars: int) -> str:
     return truncated[:space_idx] if space_idx != -1 else truncated
 
 
+# Ρήματα-δείκτες: αν υπάρχει τέτοιο ρήμα, το κομμάτι είναι πραγματική διάταξη,
+# ποτέ σκέτη επικεφαλίδα (αποτρέπει να χαρακτηριστεί header μια σύντομη RO).
+_HEADER_VERB_RE = re.compile(
+    r'(υποχρεού|οφείλ|πρέπει|υποβάλλ|υποβάλ|διαβιβ|κοινοποι|γνωστοποι|'
+    r'αποστέλλ|ενημερ|αναφέρ|καταρτίζ|δηλών|παρέχ|εκδίδ)', re.I | re.UNICODE)
+
 _HEADER_ONLY_RE = re.compile(
     r'^\s*('
     r'(?:Ά|Α)ρθρο\s+\d+[Α-ΩA-Zα-ω]?\s*[.\-–]?\s*[Α-ΩΆΈΉΊΌΎΏ][^\n.]{0,60}'  # Άρθρο N Τίτλος
@@ -374,6 +380,15 @@ _HEADER_ONLY_RE = re.compile(
     r'|ΜΕΡΟΣ\s+[^\n]{0,60}'
     r'|ΤΜΗΜΑ\s+[^\n]{0,60}'
     r'|ΤΙΤΛΟΣ\s+[^\n]{0,60}'
+    r'|ΥΠΟ(?:ΕΝΟΤΗΤΑ|ΠΑΡΑΓΡΑΦΟΣ)\s+[^\n]{0,60}'
+    r'|ΕΝΟΤΗΤΑ\s+[^\n]{0,60}'
+    r'|(?:ΠΑΡΑΡΤΗΜΑ|ΥΠΟΠΑΡΑΡΤΗΜΑ)\b[^\n]{0,60}'
+    r'|Κανονισμός\s+\d+[^\n]{0,60}'
+    # Αριθμημένος τίτλος Title-Case (π.χ. "33. Επίλυση Διαφορών", "14.1.5. Εμπιστευτικότητα.")
+    r'|\d+(?:\.\d+)*\.?\s+[Α-ΩΆΈΉΊΌΎΏ][A-Za-zΑ-Ωα-ωΆ-Ώά-ώ]+'
+    r'(?:\s+[A-Za-zΑ-Ωα-ωΆ-Ώά-ώ()·’\'-]+){0,7}[.·»]?'
+    # Κεφαλαιογράμματος τίτλος (π.χ. "ΚΥΡΩΣΕΙΣ.", "ΘΕΟΥΤΑ ΚΑΙ ΜΕΛΙΛΙΑ.")
+    r'|[Α-ΩΆΈΉΊΌΎΏA-Z0-9][Α-ΩΆΈΉΊΌΎΏA-Z0-9 ,.\-–«»()·’\'ΪΫ]{2,}'
     r')\s*$',
     re.UNICODE,
 )
@@ -381,12 +396,17 @@ _HEADER_ONLY_RE = re.compile(
 
 def _is_header_only(text: str) -> bool:
     """
-    True αν το κομμάτι είναι αμιγώς επικεφαλίδα/τίτλος άρθρου χωρίς ουσιαστικό περιεχόμενο — δηλαδή δεν χρησιμεύει ως context.
+    True αν το κομμάτι είναι αμιγώς επικεφαλίδα/τίτλος (άρθρο, κεφάλαιο, αριθμημένος ή τίτλος με κεφαλαία, παράρτημα) χωρίς ουσιαστικό περιεχόμενο — 
+    δηλαδή δεν χρησιμεύει ως context. Αν περιέχει ρήμα υποχρέωσης/αναφοράς, δεν είναι header.
     """
-    stripped = text.strip()
+    stripped = re.sub(r'\s+', ' ', text.strip())
     if not stripped:
         return True
-    return bool(_HEADER_ONLY_RE.match(stripped))
+    if _HEADER_VERB_RE.search(stripped):
+        return False
+    # Αγνόησε τυχόν αρχική στίξη/εισαγωγικά (π.χ. «"ΠΑΡΑΡΤΗΜΑ...», «(ΑΔΕΙΑ...»)
+    probe = stripped.lstrip('"\u201c\u201d\'«([{ \t')
+    return bool(_HEADER_ONLY_RE.match(probe))
 
 
 def _meaningful_context(sentences: list[str], indices: list[int]) -> str:
@@ -414,16 +434,31 @@ def _build_context_map(
         for pos, s_idx in enumerate(group):
             idx_to_group[s_idx] = (g_idx, pos)
 
+    def _usable_context(s: str) -> str | None:
+        """Καθαρισμένο κείμενο αν είναι ουσιαστικό context, αλλιώς None (επικεφαλίδα ή πολύ μικρό)."""
+        cleaned = strip_headers_from_sent(s).strip()
+        if not cleaned or _is_header_only(cleaned):
+            return None
+        if len(cleaned) < CONTEXT_MIN_MEANINGFUL_LEN:
+            return None
+        return cleaned
+
     def nearest_prev(s_idx: int) -> str | None:
         for j in range(s_idx - 1, -1, -1):
-            if not _is_header_only(sentences[j]):
-                return sentences[j].strip()
+            cleaned = _usable_context(sentences[j])
+            if cleaned:
+                capped = _truncate_prev(cleaned, CONTEXT_MAX_CHARS)
+                if capped:
+                    return capped
+                tail = cleaned[-CONTEXT_MAX_CHARS:]
+                return tail[tail.find(" ") + 1:] if " " in tail else tail
         return None
 
     def nearest_next(s_idx: int) -> str | None:
         for j in range(s_idx + 1, len(sentences)):
-            if not _is_header_only(sentences[j]):
-                return strip_headers_from_sent(sentences[j]).strip()
+            cleaned = _usable_context(sentences[j])
+            if cleaned:
+                return _truncate_next(cleaned, CONTEXT_MAX_CHARS)
         return None
 
     context_map: dict[int, tuple[str | None, str | None]] = {}
@@ -443,7 +478,7 @@ def _build_context_map(
         previous_sentence = (
             _truncate_prev(full_prev, CONTEXT_MAX_CHARS) if full_prev else None
         )
-        if previous_sentence is None:
+        if previous_sentence is None or _is_header_only(previous_sentence):
             previous_sentence = nearest_prev(s_idx)
 
         # --- Next ---
@@ -459,7 +494,10 @@ def _build_context_map(
             next_sentence = _truncate_next(full_next, CONTEXT_MAX_CHARS)
         else:
             next_sentence = None
-        if next_sentence is None or not next_sentence.strip():
+        # Fall-through αν το next είναι κενό, πολύ μικρό (π.χ. σκέτος marker «b.»)
+        # ή αμιγής επικεφαλίδα/τίτλος — τότε ψάξε την πλησιέστερη ουσιαστική πρόταση.
+        if (next_sentence is None or len(next_sentence.strip()) < CONTEXT_MIN_MEANINGFUL_LEN
+                or _is_header_only(next_sentence)):
             next_sentence = nearest_next(s_idx)
 
         context_map[s_idx] = (previous_sentence, next_sentence)
@@ -470,7 +508,7 @@ def _build_context_map(
 # ======================================================
 # 7) Επεξεργασία ενός νόμου
 # ======================================================
-def process_law(law, nlp, next_id: int, debug_file) -> tuple[list[dict], int]:
+def process_law(law, nlp, next_id: int) -> tuple[list[dict], int]:
     """
     Εξάγει τα candidate entries ενός νόμου. Επιστρέφει (entries, matches),
     όπου matches ο αριθμός των label=1
@@ -492,13 +530,6 @@ def process_law(law, nlp, next_id: int, debug_file) -> tuple[list[dict], int]:
             continue
 
         label, reason = compute_label_euro5k(sent)
-
-        if label == 0 and reason == "excluded_case":
-            text = sent.lower()
-            for p in EXCLUSION_COMPILED:
-                if p.search(text):
-                    debug_file.write(f"PATTERN: {p.pattern}\nSENT: {sent}\n---\n")
-                    break
 
         if label == 1:
             matches += 1
@@ -552,21 +583,20 @@ def main():
     logger.info(header)
     logger.info("-" * len(header))
 
-    with open("excluded_debug.txt", "w", encoding="utf-8") as dbg:
-        for law in laws:
-            entries, matches = process_law(law, nlp, len(all_entries) + 1, dbg)
-            all_entries.extend(entries)
-            total_obligations += matches
+    for law in laws:
+        entries, matches = process_law(law, nlp, len(all_entries) + 1)
+        all_entries.extend(entries)
+        total_obligations += matches
 
-            if entries:
-                laws_with_candidates += 1
-            if matches:
-                laws_with_obligations += 1
+        if entries:
+            laws_with_candidates += 1
+        if matches:
+            laws_with_obligations += 1
 
-            logger.info("| {:<8} | {:<10} | {:<6} | {:<11} | {:<14} |".format(
-                law["law_num"], law["fek_number"] or "–", law["fek_year"] or "–",
-                len(entries), matches,
-            ))
+        logger.info("| {:<8} | {:<10} | {:<6} | {:<11} | {:<14} |".format(
+            law["law_num"], law["fek_number"] or "–", law["fek_year"] or "–",
+            len(entries), matches,
+        ))
 
     output_file = Path("reporting_obligations.json")
     with output_file.open("w", encoding="utf-8") as f:

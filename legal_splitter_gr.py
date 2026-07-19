@@ -44,6 +44,7 @@ _STANDALONE_MARKER_RE = re.compile(
     r'\d+(?:\.\d+)*[α-ωΑ-Ω]?\.?'    # 1. / 14.5.3. / 1.α.
     r'|[α-ωΑ-Ω]{1,3}\)'             # α) / βα)
     r'|[α-ωΑ-Ω]{1,3}\.'             # β. / αα.
+    r'|[a-zA-Z]{1,3}[.)]'           # b. / a) / c.  (λατινικά list markers)
     r'|[ivxlIVXL]{1,6}\.'           # i. / iv.
     r')\s*$',
     re.UNICODE
@@ -97,8 +98,8 @@ _HEADER_LINE_RE = re.compile(
     r'|ΤΙΤΛΟΣ\s+[^\n]+'
     r'|ΕΝΟΤΗΤΑ\s+[^\n]+'
     r'|ΥΠΟΕΝΟΤΗΤΑ\s+[^\n]+'
-    r'|(?:Ά|Α)ρθρο\s+\d+[Α-ΩA-Zα-ω]?(?:\s*[-–]\s*[^\n]+)?'
-    r'|ΑΡΘΡΟ\s+\d+[Α-ΩA-Zα-ω]?(?:\s*[-–]\s*[^\n]+)?'
+    r'|(?:Ά|Α)ρθρο\s+\d+[Α-ΩA-Zα-ω]?(?:\s*[-–]\s*[^\n]*|\s+[Α-ΩΆΈΉΊΌΎΏ][^\n]{0,60})?'
+    r'|ΑΡΘΡΟ\s+\d+[Α-ΩA-Zα-ω]?(?:\s*[-–]\s*[^\n]*|\s+[Α-ΩΆΈΉΊΌΎΏ][^\n]{0,60})?'
     r'|\(άρθρο\s+[^\n]+\)'
     r'|\d+\.\s+[Α-ΩΆΈΉΊΌΎΏ][Α-ΩΆΈΉΊΌΎΏ\s]{3,}'
     r'|[Α-ΩΆΈΉΊΌΎΏα-ω]\.\s+[Α-ΩΆΈΉΊΌΎΏ\s]{3,}'
@@ -139,7 +140,8 @@ _BOILERPLATE_RE = re.compile(
 # Regex: υπόλειμμα προθέματος στην αρχή πρότασης
 # ======================================================
 # Καθαρίζει "θορυβώδη" προθέματα που κρέμονται από την προηγούμενη διάταξη:
-# ακρωνύμιο+παρένθεση ("ΕΕ) 1."), κεφαλαία+τελεία ("ΔΕ. 5."), ή διπλό # αριθμό ("13. 6.", "158. 3."). Ο μονός αριθμός παραγράφου ("4. Ιατροί...")
+# ακρωνύμιο+παρένθεση ("ΕΕ) 1."), κεφαλαία+τελεία ("ΔΕ. 5."), ή διπλό # αριθμό ("13. 6.", "158. 3.").
+# Ο μονός αριθμός παραγράφου ("4. Ιατροί...")
 
 _JUNK_PREFIX_RE = re.compile(
     r'^\s*(?:'
@@ -272,7 +274,7 @@ def legal_fix_gr(doc: Doc) -> Doc:
 
 
 # ======================================================
-# Post-processing 1: επανένωση "ξεκρέμαστων" suffix λέξεων
+# Post-processing 1a: Επανένωση "ξεκρέμαστων" suffix λέξεων
 # ======================================================
 # Το spaCy μερικές φορές σπάει μια ελληνική λέξη στη μέση (π.χ. "υπευθύν" | "ους.")
 # κι η επόμενη πρόταση αρχίζει με το υπόλοιπο της λέξης + τελεία.
@@ -284,8 +286,7 @@ _DANGLING_SUFFIX_RE = re.compile(
 
 def fix_dangling_suffixes(sentences: list[str]) -> list[str]:
     """
-    Αν η πρόταση[i] τελειώνει χωρίς σωστή στίξη ΚΑΙ η πρόταση[i+1]
-    αρχίζει με ελληνικό suffix + τελεία (π.χ. 'ους.', 'ς.', 'κων.'),
+    Αν η πρόταση[i] τελειώνει χωρίς σωστή στίξη ΚΑΙ η πρόταση[i+1] αρχίζει με ελληνικό suffix + τελεία (π.χ. 'ους.', 'ς.', 'κων.'),
     τότε το suffix ανήκει στο τέλος της προηγούμενης πρότασης.
     Ενώνουμε και συνεχίζουμε με ό,τι μένει στην πρόταση[i+1].
     """
@@ -322,6 +323,99 @@ def fix_dangling_suffixes(sentences: list[str]) -> list[str]:
 
 
 # ======================================================
+# Post-processing 1b: Επανένωση σπασμένων αναφορών/ημερομηνιών
+# ======================================================
+# Νομικές αναφορές και ημερομηνίες σπάνε συχνά (π.χ. "715/" | "2009", "…της από" | "30.3.2020", "19 Οκτωβρίου" | "2021.", ενωμένη λέξη
+# "προ-" | "ξενικών"). Τα παρακάτω τα ξαναενώνουν πριν το paragraph split.
+
+MONTHS_GR = (
+    "Ιανουαρίου", "Φεβρουαρίου", "Μαρτίου", "Απριλίου", "Μαΐου", "Ιουνίου",
+    "Ιουλίου", "Αυγούστου", "Σεπτεμβρίου", "Οκτωβρίου", "Νοεμβρίου", "Δεκεμβρίου",
+)
+
+# Ημιτελές τέλος πρότασης: αριθμός+"/", ανοιχτή παρένθεση, ή ξεκρέμαστος σύνδεσμος/πρόθεση/ακρωνύμιο κανονισμού.
+_INCOMPLETE_TAIL_RE = re.compile(
+    r'('
+    r'\d\s*/'
+    r'|\('
+    r'|\b(?:από|έως|μέχρι|υπ|υπ\'|υπό|αριθ|αριθμ)'
+    r'|\b(?:ΕΚ|ΕΕ|ΕΟΚ|ΕΚΑΧ)'
+    r')\s*$',
+    re.UNICODE,
+)
+# Η επόμενη πρόταση μοιάζει με συνέχεια (αρχίζει με αριθμό, "ν. 123", ή πεζό).
+_CONTINUATION_START_RE = re.compile(r'^\s*[«(]?\s*(?:\d|ν\.\s*\d|[α-ωά-ώ])', re.UNICODE)
+
+# Σκέτο έτος/ημερομηνία στην αρχή, που ανήκει στην προηγούμενη πρόταση.
+_LEADING_DATE_RE = re.compile(r'^\s*(\d{4}\.|\d{1,2}\.\d{1,2}\.\d{2,4}\.?)(\s|$)', re.UNICODE)
+_MONTH_TAIL_RE = re.compile(
+    r'(?:' + '|'.join(MONTHS_GR) + r'|\d|από|έως|μέχρι)\s*$', re.UNICODE)
+
+# Λέξη κομμένη σε αλλαγή γραμμής με ενωτικό (π.χ. "προ-" + "ξενικών").
+_HYPHEN_TAIL_RE = re.compile(r'([Α-Ωα-ωΆ-Ώά-ώ]{2,})-\s*\.?\s*$', re.UNICODE)
+
+
+def rejoin_broken_references(sentences: list[str]) -> list[str]:
+    """Ενώνει πρόταση που τελειώνει σε ημιτελή αναφορά (…715/, …(, …από) με τη συνέχειά της."""
+    out = []
+    i, n = 0, len(sentences)
+    while i < n:
+        s = sentences[i]
+        if (i + 1 < n and _INCOMPLETE_TAIL_RE.search(s)
+                and _CONTINUATION_START_RE.match(sentences[i + 1])):
+            tail = s.rstrip()
+            joiner = "" if tail.endswith(("/", "(")) else " "
+            sentences[i + 1] = tail + joiner + sentences[i + 1].lstrip()
+            i += 1
+            continue
+        out.append(s)
+        i += 1
+    return out
+
+
+def reattach_leading_date(sentences: list[str]) -> list[str]:
+    """Αν η πρόταση τελειώνει χωρίς στίξη και η επόμενη ξεκινά με σκέτο έτος/ημερομηνία, το τραβά πίσω."""
+    out = []
+    i, n = 0, len(sentences)
+    while i < n:
+        s = sentences[i]
+        if (i + 1 < n and s and s.rstrip()[-1:] not in '.;·»)]!?"'
+                and _MONTH_TAIL_RE.search(s.rstrip())):
+            m = _LEADING_DATE_RE.match(sentences[i + 1])
+            if m:
+                token = m.group(1)
+                remainder = sentences[i + 1][m.end():].lstrip()
+                out.append((s.rstrip() + " " + token).strip())
+                if remainder:
+                    sentences[i + 1] = remainder
+                    i += 1
+                    continue
+                i += 2
+                continue
+        out.append(s)
+        i += 1
+    return out
+
+
+def rejoin_hyphenated_words(sentences: list[str]) -> list[str]:
+    """Επανενώνει λέξη κομμένη με ενωτικό σε αλλαγή γραμμής (π.χ. 'προ-' + 'ξενικών')."""
+    out = []
+    i, n = 0, len(sentences)
+    while i < n:
+        s = sentences[i]
+        if i + 1 < n:
+            m = _HYPHEN_TAIL_RE.search(s)
+            nxt = sentences[i + 1].lstrip()
+            if m and nxt[:1].islower():
+                sentences[i + 1] = s[:m.start()] + m.group(1) + nxt
+                i += 1
+                continue
+        out.append(s)
+        i += 1
+    return out
+
+
+# ======================================================
 # Post-processing 2: split σε paragraph markers
 # ======================================================
 def split_on_paragraph_starts(sentences: list[str]) -> list[str]:
@@ -348,6 +442,10 @@ def fix_trailing_markers(sentences: list[str]) -> list[str]:
             pending_prefix = None
 
         m = _TRAILING_MARKER_RE.search(sent)
+        # Ο δείκτης δεν πρέπει να είναι κατάληξη συντομογραφίας (κ.λπ., π.χ., κ.ο.κ.):
+        # αν ακριβώς πριν από αυτόν υπάρχει τελεία, ανήκει σε συντομογραφία.
+        if m and m.start(1) > 0 and sent[m.start(1) - 1] == '.':
+            m = None
         if m:
             marker = m.group(1)
             sent_clean = sent[:m.start()].strip()
@@ -483,8 +581,8 @@ def build_legal_nlp_gr():
 # ======================================================
 # Regex: Απομόνωση επικεφαλίδας πριν το spaCy
 # ======================================================
-# Εισάγει όριο πρότασης (τελεία) πριν από επικεφαλίδα που βρίσκεται μόνη σε γραμμή χωρίς να προηγείται τελική στίξη, ώστε το spaCy να τη σπάσει σωστά
-# και να μην κολλήσει με την προηγούμενη διάταξη.
+# Εισάγει όριο πρότασης (τελεία) πριν από επικεφαλίδα που βρίσκεται μόνη σε γραμμή χωρίς να προηγείται τελική στίξη, 
+# ώστε το spaCy να τη σπάσει σωστά και να μην κολλήσει με την προηγούμενη διάταξη.
 _ISOLATE_HEADER_RE = re.compile(
     r'(?<=[^\n.·;:!])\n(\s*)('
     r'(?:Ά|Α)ρθρο\s+\d+[Α-ΩA-Zα-ω]?'
@@ -529,6 +627,11 @@ def split_and_clean(text: str, nlp, chunk_size: int = 300_000,
     sentences = remove_standalone_markers(sentences)
     sentences = remove_boilerplate(sentences)
     sentences = strip_junk_prefix(sentences)
+    # Τελικό pass: επανένωση σπασμένων λέξεων/αναφορών/ημερομηνιών ΑΦΟΥ έχουν τρέξει
+    # όλα τα βήματα διάσπασης — έτσι πιάνονται splits που εισάγει οποιοδήποτε βήμα.
+    sentences = rejoin_hyphenated_words(sentences)
+    sentences = rejoin_broken_references(sentences)
+    sentences = reattach_leading_date(sentences)
     return sentences
 
 

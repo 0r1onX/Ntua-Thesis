@@ -22,19 +22,26 @@ label_0 = [x for x in data if x["label"] == 0]
 sample = random.sample(label_1, 100) + random.sample(label_0, 100)
 
 
-def parse_explanation(explanation: str) -> tuple[str, str, str]:
+def parse_explanation(explanation: str) -> tuple[str, str, str, str]:
     """
-    Εξάγει Subject, Frequency, Conditionality από το explanation.
-    Επιστρέφει ("", "", "") αν δεν βρεθούν (π.χ. label=0).
+    Εξάγει Subject, Recipient, Frequency, Conditionality από το explanation.
+    Μορφή: "RO: <subject> -> <recipient>. Frequency: ... Conditionality: ..."
+    Επιστρέφει ("", "", "", "") αν δεν βρεθούν (π.χ. label=0).
     """
     subject = ""
+    recipient = ""
     frequency = ""
     conditionality = ""
 
-    # Subject: μετά το "Υπόχρεος -> " μέχρι την τελεία
-    subj_match = re.search(r"Υπόχρεος\s*->\s*(.+?)(?:\.|$)", explanation)
+    # Subject: το κείμενο ανάμεσα στο "RO:" και το "->"
+    subj_match = re.search(r"RO:\s*(.+?)\s*->", explanation)
     if subj_match:
         subject = subj_match.group(1).strip()
+
+    # Recipient: το κείμενο ανάμεσα στο "->" και το ". Frequency:"
+    recip_match = re.search(r"->\s*(.+?)\s*\.\s*Frequency:", explanation)
+    if recip_match:
+        recipient = recip_match.group(1).strip()
 
     # Frequency
     freq_match = re.search(r"Frequency:\s*(.+?)(?:\.|$)", explanation)
@@ -46,7 +53,7 @@ def parse_explanation(explanation: str) -> tuple[str, str, str]:
     if cond_match:
         conditionality = cond_match.group(1).strip()
 
-    return subject, frequency, conditionality
+    return subject, recipient, frequency, conditionality
 
 
 # δημιουργία excel
@@ -58,7 +65,7 @@ ws.title = "Sample"
 ws.append([
     "id", "previous_sentence", "text", "next_sentence",
     "law_number", "article", "label",
-    "trigger_phrase", "subject", "frequency", "conditionality"
+    "trigger_phrase", "subject", "recipient", "frequency", "conditionality"
 ])
 
 # δεδομένα
@@ -66,7 +73,7 @@ for item in sample:
     meta = item.get("metadata", {})
     trigger_phrase = meta.get("trigger_phrase", "")
     explanation = meta.get("explanation", "")
-    subject, frequency, conditionality = parse_explanation(explanation)
+    subject, recipient, frequency, conditionality = parse_explanation(explanation)
 
     ws.append([
         item["id"],
@@ -78,6 +85,7 @@ for item in sample:
         item["label"],
         trigger_phrase,
         subject,
+        recipient,
         frequency,
         conditionality,
     ])
