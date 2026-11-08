@@ -35,6 +35,12 @@ from euro5k_patterns import (
 
 logger = logging.getLogger(__name__)
 
+# Paths ως προς τη ρίζα του repo (ο φάκελος πάνω από το 01_pipeline/).
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = ROOT / "data" / "harvester.db"
+OUTPUT_PATH = ROOT / "data" / "Output" / "reporting_obligations.json"
+LOG_PATH = ROOT / "logs" / "classifier.log"
+
 # Όρια για τον paragraph-aware context builder.
 CONTEXT_MAX_CHARS = 500
 CONTEXT_MIN_MEANINGFUL_LEN = 35
@@ -45,7 +51,8 @@ MAX_SENTENCE_WORDS = 200
 
 def setup_logging():
     """Διαγνωστικά στο classifier.log, καθαρή έξοδος προόδου στην κονσόλα."""
-    file_handler = logging.FileHandler("classifier.log", encoding="utf-8", mode="w")
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8", mode="w")
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     )
@@ -61,7 +68,7 @@ def setup_logging():
 # ======================================================
 # 1) Ανάγνωση νόμων από τη βάση
 # ======================================================
-def fetch_laws(db_path="harvester.db"):
+def fetch_laws(db_path=DB_PATH):
     """
     Επιστρέφει έναν νόμο ανά nomosNum, με το κείμενο του πιο πρόσφατου ΦΕΚ.
 
@@ -598,7 +605,7 @@ def main():
             len(entries), matches,
         ))
 
-    output_file = Path("reporting_obligations.json")
+    output_file = OUTPUT_PATH
     with output_file.open("w", encoding="utf-8") as f:
         json.dump(all_entries, f, ensure_ascii=False, indent=2)
 
@@ -607,7 +614,7 @@ def main():
     logger.info("Εξετάστηκαν %d νόμοι.", len(laws))
     logger.info("%d νόμοι έχουν πιθανές υποχρεώσεις αναφοράς.", laws_with_candidates)
     logger.info("Σύνολο candidates: %d", len(all_entries))
-    logger.info("True positives (label=1): %d", total_obligations)
+    logger.info("Προβλεπόμενα θετικά (label=1): %d", total_obligations)
     logger.info("===========================================")
 
 

@@ -1,11 +1,17 @@
 import json
 import random
+from pathlib import Path
+
 from openpyxl import Workbook
+
+# Paths ως προς τη ρίζα του repo (ο φάκελος πάνω από το 02_sampling/).
+ROOT = Path(__file__).resolve().parent.parent
+INPUT_PATH = ROOT / "data" / "Output" / "reporting_obligations.json"
 
 SEED = None  # βάζω αριθμό για να πάρω ξανά κάποιο παλιό δείγμα, π.χ. SEED = 42
 
 # φόρτωση dataset
-with open("reporting_obligations.json", "r", encoding="utf-8") as f:
+with open(INPUT_PATH, "r", encoding="utf-8") as f:
     data = json.load(f)
 
 # αν δεν έχει οριστεί seed, δημιούργησε τυχαίο
@@ -50,5 +56,7 @@ ws.append([])
 ws.append(["Seed", SEED])
 
 # αποθήκευση
-wb.save("sample_200_reporting_obligations.xlsx")
-print(f"Το Excel δημιουργήθηκε: sample_200_reporting_obligations.xlsx (seed: {SEED})")
+# το seed μπαίνει στο όνομα, ώστε να μη γραφτεί πάνω στο υπάρχον δείγμα
+output_path = ROOT / "data" / "Annotation" / f"sample_200_reporting_obligations_seed{SEED}.xlsx"
+wb.save(output_path)
+print(f"Το Excel δημιουργήθηκε: {output_path} (seed: {SEED})")

@@ -13,14 +13,16 @@
 3. Εντοπισμός και ταξινόμηση προτάσεων που ενδέχεται να περιέχουν υποχρεώσεις αναφοράς, με χρήση κανόνων και pattern-based ανάλυσης (EURO-5K schema).
 4. Παραγωγή δομημένου JSON με τα αποτελέσματα της ανάλυσης.
 
-Μετά δημιουργούμε dataset αξιολόγησης 200 δειγμάτων για έλεγχο της απόδοσης του συστήματος.
+Μετά δημιουργούμε dataset αξιολόγησης 200 δειγμάτων για έλεγχο της απόδοσης του συστήματος. Οι 200 προτάσεις χαρακτηρίστηκαν από ανθρώπους με βάση τη ρουμπρίκα (`docs/annotation_rubrik.pdf`) και αποτελούν το gold standard (`data/Annotation/gold_200_v1.csv`).
 
-Για λόγους σύγκρισης, παρέχεται, επίσης, baseline μοντέλο βασισμένο σε LLM (OpenRouter API), το οποίο χρησιμοποιείται για αξιολόγηση της αποτελεσματικότητας της rule-based προσέγγισης έναντι γενικού γλωσσικού μοντέλου.
+Ως βοηθητικό εργαλείο για τον χαρακτηρισμό των 200 δειγμάτων (πριν από το gold) χρησιμοποιήθηκε LLM (GPT-4o-mini μέσω OpenRouter API).
+
+Τέλος, με active learning εκπαιδεύεται το Greek-BERT σε γύρους: το μοντέλο επιλέγει προτάσεις, αυτές χαρακτηρίζονται και το μοντέλο επανεκπαιδεύεται (βλ. `04_active_learning/`).
 
 
 ## Το παραγόμενο αρχείο εξόδου (reporting_obligations.json)
 
-Το reporting_obligations.json είναι το τελικό "προϊόν" του pipeline. Περιέχει μια λίστα από εγγραφές — μία για κάθε πρόταση νόμου, που ο αλγγόριθμος ξεχώρισε ως πιθανή υποχρέωση αναφοράς και την αξιολόγησε. Κάθε εγγραφή είναι ένα αντικείμενο JSON με τα εξής πεδία:
+Το reporting_obligations.json είναι το τελικό "προϊόν" του pipeline. Περιέχει μια λίστα από εγγραφές — μία για κάθε πρόταση νόμου, που ο αλγόριθμος ξεχώρισε ως πιθανή υποχρέωση αναφοράς και την αξιολόγησε. Κάθε εγγραφή είναι ένα αντικείμενο JSON με τα εξής πεδία:
 
 id — μοναδικό αναγνωριστικό της εγγραφής (π.χ. GR_OBL_0001), για εύκολη παραπομπή.
 
@@ -43,13 +45,21 @@ source — η προέλευση της πρότασης στη νομοθεσί
 
 ## Δομή
 
-| Αρχείο | Περιγραφή |
+| Φάκελος / αρχείο | Περιγραφή |
 |---|---|
-| `euro5k_patterns.py` | Λεξικά μοτίβων (deontic, reporting, recipients, exclusions) |
-| `reporting_obligations_v1.py` | Κύρια λογική ανίχνευσης και ταξινόμησης |
-| `legal_splitter_gr.py` | Διάσπαση νομικού κειμένου σε προτάσεις |
-| `llm_classifier_v1.py` | LLM baseline (GPT-4o-mini μέσω OpenRouter) |
-| `random200_v1.py` | Δειγματοληψία 100 label=1 + 100 label=0 από το json|
+| `01_pipeline/reporting_obligations_v1.py` | Κύρια λογική ανίχνευσης και ταξινόμησης |
+| `01_pipeline/euro5k_patterns.py` | Λεξικά μοτίβων (deontic, reporting, recipients, exclusions) |
+| `01_pipeline/legal_splitter_gr.py` | Διάσπαση νομικού κειμένου σε προτάσεις |
+| `02_sampling/random200_v1.py` | Δειγματοληψία 100 label=1 + 100 label=0 από το json (με τις στήλες του συστήματος) |
+| `02_sampling/random200_v1_lite.py` | Ίδια δειγματοληψία, «τυφλή» έκδοση: μόνο κείμενο και κενές στήλες `Evaluation` / `Reason` |
+| `03_llm_baseline/llm_classifier_v1.py` | Βοηθητικό εργαλείο χαρακτηρισμού των 200 δειγμάτων με GPT-4o-mini (OpenRouter) |
+| `04_active_learning/` | Γύροι active learning με Greek-BERT (notebook) |
+| `data/Output/reporting_obligations.json` | Έξοδος του pipeline (8.080 υποψήφιες, όλες label 0 & 1) |
+| `data/Annotation/sample_200_reporting_obligations.xlsx` | Το δείγμα των 200 (seed 64536) |
+| `data/Annotation/gold_200_v1.csv` | Gold standard των 200 (77 RO / 123 NOT_RO) |
+| `docs/annotation_rubrik.pdf` | Ρουμπρίκα χαρακτηρισμού |
+
+Η βάση `harvester.db` (~1.6GB, 3.485 νόμοι) δεν περιλαμβάνεται λόγω μεγέθους· για να τρέξει το pipeline πρέπει να μπει στο `data/harvester.db`.
 
 ## Εγκατάσταση
 
@@ -63,12 +73,15 @@ python -m spacy download el_core_news_lg
 ## Χρήση
 
 ```bash
-# Παραγωγή json
-python reporting_obligations_v1.py
+# Παραγωγή json (διαβάζει data/harvester.db, γράφει data/Output/ και logs/classifier.log)
+python 01_pipeline/reporting_obligations_v1.py
 
-# LLM baseline (απαιτεί κλειδί OpenRouter ως environment variable)
+# Δείγμα 200 (γράφει data/Annotation/sample_200_reporting_obligations_seed<SEED>.xlsx)
+python 02_sampling/random200_v1_lite.py
+
+# Χαρακτηρισμός με LLM (απαιτεί κλειδί OpenRouter ως environment variable)
 export OPENROUTER_API_KEY="sk-or-..."   # Windows: set OPENROUTER_API_KEY=...
-python llm_classifier_v1.py
+python 03_llm_baseline/llm_classifier_v1.py
 ```
 
 ## Σημείωση για τα credentials

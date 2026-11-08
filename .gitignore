@@ -17,11 +17,17 @@ env/
 harvester.db
 #reporting_obligations.json
 notes.txt
-llm_classifier_v1.py
-*.xlsx
+*.log
+logs/
+
+#*.xlsx
 
 # ---- IDE / OS ----
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+04_active_learning/rounds/
+04_active_learning/results/
+~$*

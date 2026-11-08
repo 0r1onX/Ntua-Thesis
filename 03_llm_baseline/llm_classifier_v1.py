@@ -2,6 +2,7 @@ import os
 import re
 import time
 import random
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -19,8 +20,10 @@ if not API_KEY:
     )
 
 MODEL = "openai/gpt-4o-mini"
-INPUT_FILE = "sample_300_reporting_obligations.xlsx"
-OUTPUT_FILE = "dataset_300_reporting_obligations_output.xlsx"
+# Paths ως προς τη ρίζα του repo· η έξοδος γράφεται δίπλα στο script.
+ROOT = Path(__file__).resolve().parent.parent
+INPUT_FILE = ROOT / "data" / "Annotation" / "sample_200_reporting_obligations.xlsx"
+OUTPUT_FILE = Path(__file__).resolve().parent / "dataset_200_reporting_obligations_output.xlsx"
 
 GREEN = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 RED = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
